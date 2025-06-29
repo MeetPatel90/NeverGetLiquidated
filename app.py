@@ -7,6 +7,11 @@ import numpy as np
 import requests
 import time
 from datetime import datetime
+import ssl
+import urllib3
+
+# Disable SSL warnings for older Python versions
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Page config
 st.set_page_config(
@@ -18,13 +23,41 @@ st.set_page_config(
 st.title("📈 Binance Futures Cross Margin Calculator")
 st.markdown("Calculate liquidation prices, PnL, and visualize your cross margin positions with **LIVE PRICES**")
 
-# Live Price Functions
+# Enhanced Live Price Functions with better error handling
 @st.cache_data(ttl=30)  # Cache for 30 seconds
 def get_binance_prices():
-    """Fetch live prices from Binance API (completely free, no API key needed)"""
+    """Fetch live prices from Binance API with enhanced error handling for deployment"""
     try:
+        # Primary endpoint
         url = "https://fapi.binance.com/fapi/v1/ticker/price"
-        response = requests.get(url, timeout=10)
+
+        # Enhanced headers to mimic browser requests
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        }
+
+        # Try with SSL verification first
+        try:
+            response = requests.get(
+                url,
+                headers=headers,
+                timeout=15,
+                verify=True
+            )
+        except (requests.exceptions.SSLError, ssl.SSLError):
+            # If SSL fails, try without verification (common on some cloud platforms)
+            st.warning("SSL verification failed, trying without SSL verification...")
+            response = requests.get(
+                url,
+                headers=headers,
+                timeout=15,
+                verify=False
+            )
 
         if response.status_code == 200:
             data = response.json()
@@ -32,37 +65,121 @@ def get_binance_prices():
             for item in data:
                 symbol = item['symbol']
                 if symbol.endswith('USDT'):
-                    prices[symbol] = float(item['price'])
-            return prices, True
+                    try:
+                        prices[symbol] = float(item['price'])
+                    except (ValueError, TypeError):
+                        continue
+
+            if prices:
+                return prices, True
+            else:
+                st.error("No valid price data received from Binance")
+                return {}, False
         else:
+            st.error(f"Binance API returned status code: {response.status_code}")
             return {}, False
+
+    except requests.exceptions.Timeout:
+        st.error("Binance API request timed out")
+        return try_alternative_endpoint()
+    except requests.exceptions.ConnectionError:
+        st.error("Connection error to Binance API")
+        return try_alternative_endpoint()
+    except requests.exceptions.RequestException as e:
+        st.error(f"Request error: {str(e)}")
+        return try_alternative_endpoint()
     except Exception as e:
-        st.error(f"Error fetching live prices: {str(e)}")
+        st.error(f"Unexpected error fetching prices: {str(e)}")
         return {}, False
 
+def try_alternative_endpoint():
+    """Try alternative Binance endpoint"""
+    try:
+        # Alternative endpoint - spot prices (often more reliable)
+        url = "https://api.binance.com/api/v3/ticker/price"
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+
+        response = requests.get(url, headers=headers, timeout=10, verify=False)
+
+        if response.status_code == 200:
+            data = response.json()
+            prices = {}
+            for item in data:
+                symbol = item['symbol']
+                if symbol.endswith('USDT'):
+                    try:
+                        prices[symbol] = float(item['price'])
+                    except (ValueError, TypeError):
+                        continue
+
+            if prices:
+                st.info("Using spot prices from alternative endpoint")
+                return prices, True
+
+    except Exception as e:
+        st.error(f"Alternative endpoint also failed: {str(e)}")
+
+    return {}, False
+
 def get_live_prices():
-    """Get live prices from Binance API"""
+    """Get live prices from Binance API with fallback"""
     prices, success = get_binance_prices()
 
     if not success or not prices:
-        # Return default prices as fallback
-        st.warning("Binance API unavailable, using default prices")
+        # Show more detailed error information
+        st.error("❌ Unable to fetch live prices from Binance API")
+        st.info("This might be due to:")
+        st.markdown("""
+        - **Render.com firewall/proxy issues**
+        - **SSL certificate problems** 
+        - **Rate limiting from Binance**
+        - **Network connectivity issues**
+        - **DNS resolution problems**
+        """)
+
+        # Return more realistic default prices
+        st.warning("🔄 Using default fallback prices")
         return {
-            "BTCUSDT": 50000.0,
-            "ETHUSDT": 3000.0,
-            "ADAUSDT": 0.50,
-            "SOLUSDT": 100.0,
-            "DOGEUSDT": 0.08,
-            "XRPUSDT": 0.60,
-            "LTCUSDT": 80.0,
-            "AVAXUSDT": 35.0,
-            "DOTUSDT": 7.0,
-            "LINKUSDT": 15.0,
+            "BTCUSDT": 43500.0,
+            "ETHUSDT": 2650.0,
+            "ADAUSDT": 0.45,
+            "SOLUSDT": 95.0,
+            "DOGEUSDT": 0.075,
+            "XRPUSDT": 0.58,
+            "LTCUSDT": 75.0,
+            "AVAXUSDT": 32.0,
+            "DOTUSDT": 6.5,
+            "LINKUSDT": 14.0,
             "BANANAS31USDT": 0.01,
             "BROCCOLI714USDT": 0.01
         }
 
     return prices
+
+# Add debugging section in sidebar
+st.sidebar.header("🔧 Debug Info")
+if st.sidebar.checkbox("Show Debug Information"):
+    st.sidebar.markdown("**Environment Check:**")
+
+    # Test basic connectivity
+    try:
+        test_response = requests.get("https://httpbin.org/get", timeout=5)
+        st.sidebar.success("✅ Basic internet connectivity: OK")
+    except:
+        st.sidebar.error("❌ Basic internet connectivity: FAILED")
+
+    # Test Binance connectivity
+    try:
+        test_binance = requests.get("https://api.binance.com/api/v3/ping", timeout=5)
+        if test_binance.status_code == 200:
+            st.sidebar.success("✅ Binance API reachable")
+        else:
+            st.sidebar.error(f"❌ Binance API status: {test_binance.status_code}")
+    except Exception as e:
+        st.sidebar.error(f"❌ Binance API error: {str(e)}")
 
 # Initialize session state for positions
 if 'positions' not in st.session_state:
@@ -94,13 +211,26 @@ if st.sidebar.button("🔄 Refresh Prices Now"):
     st.cache_data.clear()
     st.rerun()
 
+# Force refresh button for debugging
+if st.sidebar.button("🔄 Force Refresh (Clear Cache)"):
+    st.cache_data.clear()
+    # Clear the entire cache
+    st.session_state.last_update = 0
+    st.rerun()
+
 # Get live prices
 live_prices = get_live_prices()
 
-# Display last update time
+# Display last update time and status
 if live_prices:
-    st.sidebar.success(f"✅ Live prices loaded")
-    st.sidebar.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
+    # Check if we're using real data or fallback
+    sample_price = live_prices.get("BTCUSDT", 0)
+    if sample_price == 43500.0:  # Our fallback value
+        st.sidebar.warning("⚠️ Using fallback prices")
+        st.sidebar.caption("Live prices unavailable")
+    else:
+        st.sidebar.success(f"✅ Live prices loaded ({len(live_prices)} symbols)")
+        st.sidebar.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
 
 # Auto-refresh mechanism
 if auto_refresh:
@@ -127,8 +257,16 @@ with col3:
     # Use live price as default, with fallback to predefined defaults
     current_live_price = live_prices.get(crypto, 1.0)
 
-    # Show live price indicator
-    price_indicator = f"🟢 Live: ${current_live_price:,.6f}" if crypto in live_prices else "🔴 Offline"
+    # Show live price indicator with better status
+    if crypto in live_prices:
+        sample_price = live_prices.get("BTCUSDT", 0)
+        if sample_price == 43500.0:  # Our fallback value
+            price_indicator = f"🟡 Fallback: ${current_live_price:,.6f}"
+        else:
+            price_indicator = f"🟢 Live: ${current_live_price:,.6f}"
+    else:
+        price_indicator = "🔴 Offline"
+
     st.caption(price_indicator)
 
     entry_price = st.number_input(
@@ -222,7 +360,15 @@ if st.session_state.positions:
     st.header("💹 PnL Calculator & Liquidation Analysis")
 
     # Current price inputs with live prices
-    st.subheader("📊 Current Prices (Live from Binance)")
+    st.subheader("📊 Current Prices")
+
+    # Show price source status
+    sample_price = live_prices.get("BTCUSDT", 0)
+    if sample_price == 43500.0:  # Our fallback value
+        st.info("📊 Currently using fallback prices - prices may not reflect real market conditions")
+    else:
+        st.success("📊 Using live prices from Binance API")
+
     current_prices = {}
 
     unique_cryptos = list(set(pos['crypto'] for pos in st.session_state.positions))
@@ -249,16 +395,16 @@ if st.session_state.positions:
                 )
                 current_prices[crypto] = live_price
             else:
-                st.error(f"No live price for {crypto}")
+                st.error(f"No price data for {crypto}")
                 current_prices[crypto] = entry_price
 
     # Manual price override option
     st.subheader("🔧 Manual Price Override (Optional)")
-    with st.expander("Override live prices for testing"):
+    with st.expander("Override prices for testing"):
         manual_overrides = {}
         for crypto in unique_cryptos:
             manual_price = st.number_input(
-                f"Override {crypto} Price (leave 0 to use live price)",
+                f"Override {crypto} Price (leave 0 to use current price)",
                 min_value=0.0,
                 value=0.0,
                 step=0.000001,
