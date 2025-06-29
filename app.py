@@ -46,7 +46,7 @@ def get_live_prices():
 
     if not success or not prices:
         # Return default prices as fallback
-        st.error("Binance API unavailable, using default prices")
+        st.warning("Binance API unavailable, using default prices")
         return {
             "BTCUSDT": 50000.0,
             "ETHUSDT": 3000.0,
@@ -180,6 +180,12 @@ if st.button("Add Position"):
     }
     st.session_state.positions.append(position)
     st.success(f"Added {position_type} position for {crypto} | Margin Used: ${margin_used:.2f} | Quantity: {quantity:.6f}")
+
+# Initialize default values for variables that might be undefined
+total_pnl = 0
+total_maintenance_margin = 0
+margin_ratio = 0
+total_maintenance_margin_grouped = 0
 
 # Display current positions
 if st.session_state.positions:
@@ -529,6 +535,9 @@ if st.session_state.positions:
                 'maintenance_margin': maintenance_margin
             })
 
+        # Update total_maintenance_margin_grouped for use in footer
+        total_maintenance_margin_grouped = sum(row['maintenance_margin'] for row in grouped_data) if grouped_data else 0
+
         grouped_df = pd.DataFrame(grouped_data)
         if not grouped_df.empty:
             # Format the dataframe for display
@@ -551,7 +560,6 @@ if st.session_state.positions:
         st.subheader("🎯 Cross Margin Liquidation Process")
 
         # Calculate overall liquidation threshold
-        total_maintenance_margin_grouped = sum(row['maintenance_margin'] for row in grouped_data) if grouped_data else 0
         liquidation_threshold_pnl = total_maintenance_margin_grouped - wallet_balance
 
         col1, col2 = st.columns(2)
@@ -559,8 +567,6 @@ if st.session_state.positions:
             st.metric("Total Maintenance Margin Required", f"${total_maintenance_margin_grouped:.2f}")
         with col2:
             st.metric("Liquidation PnL Threshold", f"${liquidation_threshold_pnl:.2f}")
-
-
 
         # Show how positions affect each other
         if len(grouped_positions) > 1:
